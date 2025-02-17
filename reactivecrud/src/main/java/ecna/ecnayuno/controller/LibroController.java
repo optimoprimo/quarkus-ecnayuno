@@ -8,9 +8,10 @@ import org.jboss.resteasy.reactive.RestResponse;
 
 import ecna.ecnayuno.model.Libro;
 import ecna.ecnayuno.repo.LibroRepository;
+import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.quarkus.panache.common.Sort;
 import io.quarkus.panache.common.Sort.Direction;
-import jakarta.transaction.Transactional;
+import io.smallrye.mutiny.Uni;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
@@ -38,7 +39,7 @@ public class LibroController {
     }
 
     @GET
-    public List<Libro> getLibros(@QueryParam("pageNumber") @DefaultValue("0") int pageNumber,
+    public Uni<List<Libro>> getLibros(@QueryParam("pageNumber") @DefaultValue("0") int pageNumber,
             @QueryParam("pageSize") @DefaultValue("1") int pageSize,
             @QueryParam("sortBy") @DefaultValue("id") String sortBy,
             @QueryParam("direction") @DefaultValue("Ascending") Direction direction
@@ -49,35 +50,36 @@ public class LibroController {
 
     @GET
     @Path("/{id}")
-    public RestResponse<Libro> findById(@PathParam("id") UUID id) {
+    public Uni<RestResponse<Libro>> findById(@PathParam("id") UUID id) {
         log.debug("findById");
-        return libroRepository.findByIdOptional(id).map(RestResponse::ok).orElse(RestResponse.notFound());
+        return libroRepository.findById(id)
+        .onItem().ifNotNull().transform(RestResponse::ok)
+        .onItem().ifNull().continueWith(RestResponse.notFound());
     }
 
     @POST
-    @Transactional
-    public RestResponse<Void> addLibro(Libro libro, UriInfo uriInfo) {
+    @WithTransaction
+    public Uni<RestResponse<Void>> addLibro(Libro libro, UriInfo uriInfo) {
         log.debug("addLibro");
-        libroRepository.persist(libro);
-        return RestResponse.created(uriInfo.getBaseUriBuilder().path(LibroController.class)
-                .path(LibroController.class, "findById").build(libro.getId()));
+        return libroRepository.persist(libro).map((persisted)->RestResponse.created(uriInfo.getBaseUriBuilder().path(LibroController.class)
+        .path(LibroController.class, "findById").build(persisted.getId())));
     }
 
     @PUT
-    @Transactional
-    public RestResponse<Void> updateLibro(Libro libro) {
+    @WithTransaction
+    public Uni<RestResponse<Void>> updateLibro(Libro libro) {
         log.debug("updateLibro");
-        libroRepository.getEntityManager().merge(libro);
-        return RestResponse.noContent();
+        return libroRepository.findById(libro.getId()).onItem().ifNotNull().invoke(entity -> {
+            entity.setNombre(libro.getNombre());
+        }).onItem().ifNotNull().call(libroRepository::persist).onItem().transform(entity -> RestResponse.noContent());
     }
 
     @DELETE
     @Path("/{id}")
-    @Transactional
-    public RestResponse<Void> deleteById(@PathParam("id") UUID id) {
+    @WithTransaction
+    public Uni<RestResponse<Void>> deleteById(@PathParam("id") UUID id) {
         log.debug("deleteById");
-        libroRepository.deleteById(id);
-        return RestResponse.noContent();
+        return  libroRepository.deleteById(id).onItem().transform(delete -> RestResponse.noContent());
     }
 
 }
